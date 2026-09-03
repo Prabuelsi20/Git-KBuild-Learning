@@ -44,7 +44,7 @@ jobs:
       - name: Install dependencies
         run: |
           sudo apt update
-          sudo apt install -y flex libncurses6 bc cpio python3 unzstd
+          sudo apt install -y flex libncurses6 bc cpio python3 zstd
 
       # ============ COMPILER CACHE ============
       - name: Cache Clang (Neutron)
@@ -115,9 +115,7 @@ jobs:
       - name: Fix cpu_errata.c
         run: |
           cd kernel
-          # Backup original
           cp arch/arm64/kernel/cpu_errata.c arch/arm64/kernel/cpu_errata.c.bak
-          # Download fixed version from LineageOS (compatible with 4.19)
           wget -O arch/arm64/kernel/cpu_errata.c \
             https://raw.githubusercontent.com/LineageOS/android_kernel_oneplus_sm8250/lineage-21/arch/arm64/kernel/cpu_errata.c || \
             echo "WARNING: Failed to download fixed cpu_errata.c, using fallback"
@@ -130,14 +128,11 @@ jobs:
       - name: Fix f2fs clear_cold_data
         run: |
           cd kernel
-          # Check if clear_cold_data is defined, if not, add definition
           if ! grep -q "clear_cold_data" fs/f2fs/f2fs.h; then
             echo "Adding clear_cold_data definition to f2fs.h"
             sed -i '/^static inline void set_cold_data/a \
           static inline void clear_cold_data(struct page *page) { ClearPagePrivate2(page); }' fs/f2fs/f2fs.h
           fi
-          # Also remove the call from data.c if it still causes error (fallback)
-          # But definition should be enough, so we leave it.
 
       # ============ BUILD ============
       - name: Build kernel
@@ -148,10 +143,8 @@ jobs:
           export KBUILD_BUILD_USER="builder"
           export KBUILD_BUILD_HOST="github"
           cd kernel
-          # Generate defconfig and then fill defaults to avoid interactive prompts
           make O=out vendor/${{ github.event.inputs.DEFCONFIG }}
           make O=out olddefconfig
-          # Build with LLVM
           make O=out CC=clang -j$(nproc --all) \
             CROSS_COMPILE=aarch64-linux-gnu- \
             LLVM=1 LLVM_IAS=1 AR=llvm-ar
