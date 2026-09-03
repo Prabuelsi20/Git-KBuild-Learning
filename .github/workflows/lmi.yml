@@ -6,7 +6,7 @@ on:
     inputs:
       KERNEL_TREE_1:
         description: 'Kernel Tree'
-        default: 'https://github.com/Prabuelsi20/kernel_xiaomi_sm8250-Nesux-Alioth-Test'
+        default: 'https://github.com/Prabuelsi20/kernel_xiaomi_sm8250-Nesux-alioth-Test'
         required: true
       KERNEL_TREE_BRANCH_1:
         description: 'Kernel Tree Branch 1'
@@ -108,6 +108,14 @@ jobs:
           fi
           git clone --depth=1 --branch "${{ env.KERNEL_TREE_BRANCH }}" "${REPO_URL}" kernel_tree
 
+      # ========== PERBAIKAN UTAMA : Clone KernelSU ==========
+      - name: Add KernelSU
+        run: |
+          cd kernel_tree
+          if [ ! -d drivers/kernelsu ]; then
+            git clone https://github.com/tiann/KernelSU.git drivers/kernelsu
+          fi
+
       - name: Kernel Version
         run: |
           cd kernel_tree
@@ -117,6 +125,7 @@ jobs:
           elif [[ "${{ github.event.inputs.VARIANT }}" == "oplus-variant" ]]; then
             EXTRA="-oplus"
           fi
+          # Sekarang gunakan lmi_defconfig (konsisten dengan make)
           sed -i -e "s/CONFIG_LOCALVERSION=\"-FakeDreamer\"/CONFIG_LOCALVERSION=\"${{ github.event.inputs.CUSTOM_SED }}${EXTRA}\"/" arch/arm64/configs/vendor/lmi_defconfig
 
       - name: Remove cycle count
@@ -136,19 +145,20 @@ jobs:
         if: matrix.kernel == 2
         run: |
           cd kernel_tree
-          sed -i -e '/CONFIG_KSU=y/c\# CONFIG_KSU is not set;' arch/arm64/configs/vendor/alioth_defconfig
-          sed -i -e '/CONFIG_KSU_TAMPER_SYSCALL_TABLE=y/c\# CONFIG_KSU_TAMPER_SYSCALL_TABLE is not set;' arch/arm64/configs/vendor/alioth_defconfig
-          sed -i -e '/CONFIG_KSU_FEATURE_SULOG=y/c\# CONFIG_KSU_FEATURE_SULOG is not set;' arch/arm64/configs/vendor/alioth_defconfig
-          sed -i -e '/CONFIG_KSU_FEATURE_ADBROOT=y/c\# CONFIG_KSU_FEATURE_ADBROOT is not set;' arch/arm64/configs/vendor/alioth_defconfig
-          sed -i -e '/CONFIG_KSU_LSM_SECURITY_HOOKS=y/c\# CONFIG_KSU_LSM_SECURITY_HOOKS is not set;' arch/arm64/configs/vendor/alioth_defconfig
-          sed -i -e '/CONFIG_KSU_HEURISTIC_IN_TREE_BUILD=y/c\# CONFIG_KSU_HEURISTIC_IN_TREE_BUILD is not set;' arch/arm64/configs/vendor/alioth_defconfig
+          # Nonaktifkan KSU di defconfig (gunakan lmi_defconfig)
+          sed -i -e '/CONFIG_KSU=y/c\# CONFIG_KSU is not set' arch/arm64/configs/vendor/lmi_defconfig
+          sed -i -e '/CONFIG_KSU_TAMPER_SYSCALL_TABLE=y/c\# CONFIG_KSU_TAMPER_SYSCALL_TABLE is not set' arch/arm64/configs/vendor/lmi_defconfig
+          sed -i -e '/CONFIG_KSU_FEATURE_SULOG=y/c\# CONFIG_KSU_FEATURE_SULOG is not set' arch/arm64/configs/vendor/lmi_defconfig
+          sed -i -e '/CONFIG_KSU_FEATURE_ADBROOT=y/c\# CONFIG_KSU_FEATURE_ADBROOT is not set' arch/arm64/configs/vendor/lmi_defconfig
+          sed -i -e '/CONFIG_KSU_LSM_SECURITY_HOOKS=y/c\# CONFIG_KSU_LSM_SECURITY_HOOKS is not set' arch/arm64/configs/vendor/lmi_defconfig
+          sed -i -e '/CONFIG_KSU_HEURISTIC_IN_TREE_BUILD=y/c\# CONFIG_KSU_HEURISTIC_IN_TREE_BUILD is not set' arch/arm64/configs/vendor/lmi_defconfig
 
       - name: Change different battery type
         if: matrix.kernel == 3 || matrix.kernel == 4
         run: |
           cd kernel_tree
-          sed -i -e '/qcom,j3s-batt-profile;/d' arch/arm64/boot/dts/vendor/qcom/alioth-sm8250.dtsi
-          sed -i -e '/fg-gen4-batterydata-apollo-sun-5000mah.dtsi/d' arch/arm64/boot/dts/vendor/qcom/alioth-sm8250.dtsi
+          sed -i -e '/qcom,j3s-batt-profile;/d' arch/arm64/boot/dts/vendor/qcom/lmi-sm8250.dtsi
+          sed -i -e '/fg-gen4-batterydata-apollo-sun-5000mah.dtsi/d' arch/arm64/boot/dts/vendor/qcom/lmi-sm8250.dtsi
 
       - name: Revert to stock gpufreq
         if: matrix.kernel == 3 || matrix.kernel == 4
@@ -166,14 +176,16 @@ jobs:
         if: ${{ github.event.inputs.LTO_CHOICE == 'thin_lto' }}
         run: |
           cd kernel_tree
-          sed -i -e '/# CONFIG_LTO_CLANG_THIN is not set/c\CONFIG_LTO_CLANG_THIN=y;' arch/arm64/configs/vendor/alioth_defconfig
-          sed -i -e '/CONFIG_LTO_CLANG_FULL=y/c\# CONFIG_LTO_CLANG_FULL is not set;' arch/arm64/configs/vendor/alioth_defconfig
+          # Gunakan lmi_defconfig
+          sed -i -e '/# CONFIG_LTO_CLANG_THIN is not set/c\CONFIG_LTO_CLANG_THIN=y' arch/arm64/configs/vendor/lmi_defconfig
+          sed -i -e '/CONFIG_LTO_CLANG_FULL=y/c\# CONFIG_LTO_CLANG_FULL is not set' arch/arm64/configs/vendor/lmi_defconfig
 
       - name: Oplus Features
         if: ${{ github.event.inputs.VARIANT == 'oplus-variant' }}
         run: |
           cd kernel_tree
-          sed -i -e '/# CONFIG_OPLUS_PORT is not set/c\CONFIG_OPLUS_PORT=y;' arch/arm64/configs/vendor/alioth_defconfig
+          # Gunakan lmi_defconfig
+          sed -i -e '/# CONFIG_OPLUS_PORT is not set/c\CONFIG_OPLUS_PORT=y' arch/arm64/configs/vendor/lmi_defconfig
 
       - name: Apply Modifications (if modified build)
         if: matrix.kernel == 2 || matrix.kernel == 4
@@ -196,22 +208,22 @@ jobs:
           export KBUILD_BUILD_HOST="dreamstate"
           export KBUILD_BUILD_TIMESTAMP="$(TZ=UTC-7 date)"
           cd kernel_tree
-          make O=out vendor/alioth_defconfig
+          make O=out vendor/lmi_defconfig
           make O=out CC=clang -j$(nproc --all) CROSS_COMPILE=aarch64-linux-gnu- LLVM=1 LLVM_IAS=1
           if [[ "${{ matrix.kernel }}" == 1 ]]; then
             cp out/arch/arm64/boot/Image.gz ../Image.gz
-            mv out/arch/arm64/boot/dtbo.img ../alioth-j3s-dtbo-aosp.img
-            mv out/arch/arm64/boot/dtb.img ../alioth-normal-dtb
+            mv out/arch/arm64/boot/dtbo.img ../lmi-j3s-dtbo-aosp.img
+            mv out/arch/arm64/boot/dtb.img ../lmi-normal-dtb
           elif [[ "${{ matrix.kernel }}" == 2 ]]; then
             cp out/arch/arm64/boot/Image.gz ../Image.gz
-            mv out/arch/arm64/boot/dtbo.img ../alioth-j3s-dtbo-miui.img
-            mv out/arch/arm64/boot/dtb.img ../alioth-effcpu-dtb
+            mv out/arch/arm64/boot/dtbo.img ../lmi-j3s-dtbo-miui.img
+            mv out/arch/arm64/boot/dtb.img ../lmi-effcpu-dtb
           elif [[ "${{ matrix.kernel }}" == 3 ]]; then
-            mv out/arch/arm64/boot/dtb.img ../alioth-normal-gpustk-dtb
-            mv out/arch/arm64/boot/dtbo.img ../alioth-stock-dtbo-aosp.img
+            mv out/arch/arm64/boot/dtb.img ../lmi-normal-gpustk-dtb
+            mv out/arch/arm64/boot/dtbo.img ../lmi-stock-dtbo-aosp.img
           else
-            mv out/arch/arm64/boot/dtb.img ../alioth-effcpu-gpustk-dtb
-            mv out/arch/arm64/boot/dtbo.img ../alioth-stock-dtbo-miui.img
+            mv out/arch/arm64/boot/dtb.img ../lmi-effcpu-gpustk-dtb
+            mv out/arch/arm64/boot/dtbo.img ../lmi-stock-dtbo-miui.img
           fi
 
       - name: Upload Kernel Artifacts
@@ -228,8 +240,8 @@ jobs:
         with:
           name: kernel-part-${{ matrix.kernel }}-addon
           path: |
-            alioth-j3s-dtbo-aosp.img
-            alioth-normal-dtb
+            lmi-j3s-dtbo-aosp.img
+            lmi-normal-dtb
 
       - name: Upload Kernel Artifacts
         uses: actions/upload-artifact@v4
@@ -237,8 +249,8 @@ jobs:
         with:
           name: kernel-part-${{ matrix.kernel }}-addon
           path: |
-            alioth-j3s-dtbo-miui.img
-            alioth-effcpu-dtb
+            lmi-j3s-dtbo-miui.img
+            lmi-effcpu-dtb
 
       - name: Upload Kernel Artifacts
         uses: actions/upload-artifact@v4
@@ -246,8 +258,8 @@ jobs:
         with:
           name: kernel-part-${{ matrix.kernel }}-addon
           path: |
-            alioth-stock-dtbo-aosp.img
-            alioth-normal-gpustk-dtb
+            lmi-stock-dtbo-aosp.img
+            lmi-normal-gpustk-dtb
 
       - name: Upload Kernel Artifacts
         uses: actions/upload-artifact@v4
@@ -255,8 +267,8 @@ jobs:
         with:
           name: kernel-part-${{ matrix.kernel }}-addon
           path: |
-            alioth-stock-dtbo-miui.img
-            alioth-effcpu-gpustk-dtb
+            lmi-stock-dtbo-miui.img
+            lmi-effcpu-gpustk-dtb
 
   package_anykernel:
     needs: build
@@ -330,4 +342,3 @@ jobs:
             AnyKernel3-${{ matrix.kernel }}/
             !AnyKernel3-${{ matrix.kernel }}/.git
             !AnyKernel3-${{ matrix.kernel }}/.github
-      
