@@ -126,6 +126,19 @@ jobs:
             sed -i '/ERRATA_MIDR_RANGE_LIST/,/^[[:space:]]*}/d' arch/arm64/kernel/cpu_errata.c
           fi
 
+      # ============ FIX F2FS CLEAR_COLD_DATA ============
+      - name: Fix f2fs clear_cold_data
+        run: |
+          cd kernel
+          # Check if clear_cold_data is defined, if not, add definition
+          if ! grep -q "clear_cold_data" fs/f2fs/f2fs.h; then
+            echo "Adding clear_cold_data definition to f2fs.h"
+            sed -i '/^static inline void set_cold_data/a \
+          static inline void clear_cold_data(struct page *page) { ClearPagePrivate2(page); }' fs/f2fs/f2fs.h
+          fi
+          # Also remove the call from data.c if it still causes error (fallback)
+          # But definition should be enough, so we leave it.
+
       # ============ BUILD ============
       - name: Build kernel
         run: |
