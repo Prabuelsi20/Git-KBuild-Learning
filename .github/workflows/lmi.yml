@@ -108,11 +108,12 @@ jobs:
           fi
           git clone --depth=1 --branch "${{ env.KERNEL_TREE_BRANCH }}" "${REPO_URL}" kernel_tree
 
-      # ========== PERBAIKAN UTAMA : Clone KernelSU ==========
+      # ========== PERBAIKAN : Clone KernelSU hanya jika Kconfig tidak ada ==========
       - name: Add KernelSU
         run: |
           cd kernel_tree
-          if [ ! -d drivers/kernelsu ]; then
+          if [ ! -f drivers/kernelsu/Kconfig ]; then
+            rm -rf drivers/kernelsu
             git clone https://github.com/tiann/KernelSU.git drivers/kernelsu
           fi
 
@@ -125,7 +126,6 @@ jobs:
           elif [[ "${{ github.event.inputs.VARIANT }}" == "oplus-variant" ]]; then
             EXTRA="-oplus"
           fi
-          # Sekarang gunakan lmi_defconfig (konsisten dengan make)
           sed -i -e "s/CONFIG_LOCALVERSION=\"-FakeDreamer\"/CONFIG_LOCALVERSION=\"${{ github.event.inputs.CUSTOM_SED }}${EXTRA}\"/" arch/arm64/configs/vendor/lmi_defconfig
 
       - name: Remove cycle count
@@ -145,7 +145,6 @@ jobs:
         if: matrix.kernel == 2
         run: |
           cd kernel_tree
-          # Nonaktifkan KSU di defconfig (gunakan lmi_defconfig)
           sed -i -e '/CONFIG_KSU=y/c\# CONFIG_KSU is not set' arch/arm64/configs/vendor/lmi_defconfig
           sed -i -e '/CONFIG_KSU_TAMPER_SYSCALL_TABLE=y/c\# CONFIG_KSU_TAMPER_SYSCALL_TABLE is not set' arch/arm64/configs/vendor/lmi_defconfig
           sed -i -e '/CONFIG_KSU_FEATURE_SULOG=y/c\# CONFIG_KSU_FEATURE_SULOG is not set' arch/arm64/configs/vendor/lmi_defconfig
@@ -176,7 +175,6 @@ jobs:
         if: ${{ github.event.inputs.LTO_CHOICE == 'thin_lto' }}
         run: |
           cd kernel_tree
-          # Gunakan lmi_defconfig
           sed -i -e '/# CONFIG_LTO_CLANG_THIN is not set/c\CONFIG_LTO_CLANG_THIN=y' arch/arm64/configs/vendor/lmi_defconfig
           sed -i -e '/CONFIG_LTO_CLANG_FULL=y/c\# CONFIG_LTO_CLANG_FULL is not set' arch/arm64/configs/vendor/lmi_defconfig
 
@@ -184,7 +182,6 @@ jobs:
         if: ${{ github.event.inputs.VARIANT == 'oplus-variant' }}
         run: |
           cd kernel_tree
-          # Gunakan lmi_defconfig
           sed -i -e '/# CONFIG_OPLUS_PORT is not set/c\CONFIG_OPLUS_PORT=y' arch/arm64/configs/vendor/lmi_defconfig
 
       - name: Apply Modifications (if modified build)
