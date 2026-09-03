@@ -1,0 +1,158 @@
+name: Build Kernel LMI (Nexus) - Optimized
+
+on:
+  workflow_dispatch:
+    inputs:
+      KERNEL_REPO:
+        description: 'Kernel repository URL'
+        required: true
+        default: 'https://github.com/Prabuelsi20/kernel_xiaomi_sm8250-Nesux-Alioth-Test'
+      KERNEL_BRANCH:
+        description: 'Kernel branch'
+        required: true
+        default: 'A16m-mglru'
+      DEFCONFIG:
+        description: 'Defconfig name (without path)'
+        required: true
+        default: 'lmi_defconfig'
+      COMPILER:
+        description: 'Compiler choice (neutron ~600MB, r547379 ~900MB)'
+        required: true
+        type: choice
+        options:
+          - neutron
+          - r547379
+        default: neutron
+      CUSTOM_VERSION:
+        description: 'Custom kernel version suffix'
+        required: false
+        default: '-Nexus-LMI'
+      BUILD_KSU:
+        description: 'Include KernelSU?'
+        required: true
+        type: choice
+        options:
+          - 'yes'
+          - 'no'
+        default: 'yes'
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Install dependencies
+        run: |
+          sudo apt update
+          sudo apt install -y flex libncurses6 bc cpio python3 unzstd
+
+      # ============ COMPILER CACHE ============
+      - name: Cache Clang (Neutron)
+        if: ${{ github.event.inputs.COMPILER == 'neutron' }}
+        id: cache-neutron
+        uses: actions/cache@v3
+        with:
+          path: clang
+          key: neutron-clang-30072026
+
+      - name: Cache Clang (r547379)
+        if: ${{ github.event.inputs.COMPILER == 'r547379' }}
+        id: cache-r547379
+        uses: actions/cache@v3
+        with:
+          path: clang
+          key: clang-r547379
+
+      # ============ DOWNLOAD COMPILER ============
+      - name: Download Neutron
+        if: ${{ github.event.inputs.COMPILER == 'neutron' && steps.cache-neutron.outputs.cache-hit != 'true' }}
+        run: |
+          wget https://github.com/Neutron-Toolchains/clang-build-catalogue/releases/download/30072026/neutron-clang-30072026.tar.zst -O clang.tar.zst
+          mkdir clang
+          unzstd -d clang.tar.zst
+          tar -xf clang.tar -C clang
+
+      - name: Download r547379
+        if: ${{ github.event.inputs.COMPILER == 'r547379' && steps.cache-r547379.outputs.cache-hit != 'true' }}
+        run: |
+          wget https://android.googlesource.com/platform/prebuilts/clang/host/linux-x86/+archive/refs/heads/main/clang-r547379.tar.gz -O clang.tar.gz
+          mkdir clang
+          tar -xf clang.tar.gz -C clang
+
+      # ============ CLONE KERNEL ============
+      - name: Clone kernel source (with submodules)
+        run: |
+          git clone --recurse-submodules --depth=1 \
+            -b ${{ github.event.inputs.KERNEL_BRANCH }} \
+            ${{ github.event.inputs.KERNEL_REPO }} \
+            kernel
+
+      # ============ KERNELSU ============
+      - name: Ensure KernelSU is present
+        if: ${{ github.event.inputs.BUILD_KSU == 'yes' }}
+        run: |
+          cd kernel
+          if [ ! -f drivers/kernelsu/Kconfig ]; then
+            rm -rf drivers/kernelsu
+            git clone https://github.com/tiann/KernelSU.git drivers/kernelsu
+          fi
+
+      - name: Remove KernelSU (if disabled)
+        if: ${{ github.event.inputs.BUILD_KSU == 'no' }}
+        run: |
+          cd kernel
+          sed -i '/CONFIG_KSU/d' arch/arm64/configs/vendor/${{ github.event.inputs.DEFCONFIG }}
+          echo "# CONFIG_KSU is not set" >> arch/arm64/configs/vendor/${{ github.event.inputs.DEFCONFIG }}
+
+      # ============ SET VERSION ============
+      - name: Set kernel version
+        run: |
+          cd kernel
+          sed -i "s/CONFIG_LOCALVERSION=\"[^\"]*\"/CONFIG_LOCALVERSION=\"${{ github.event.inputs.CUSTOM_VERSION }}\"/" \
+            arch/arm64/configs/vendor/${{ github.event.inputs.DEFCONFIG }}
+
+      # ============ FIX CPU_ERRATA.C ============
+      - name: Fix cpu_errata.c
+        run: |
+          cd kernel
+          # Backup original
+          cp arch/arm64/kernel/cpu_errata.c arch/arm64/kernel/cpu_errata.c.bak
+          # Download fixed version from LineageOS (compatible with 4.19)
+          wget -O arch/arm64/kernel/cpu_errata.c \
+            https://raw.githubusercontent.com/LineageOS/android_kernel_oneplus_sm8250/lineage-21/arch/arm64/kernel/cpu_errata.c || \
+            echo "WARNING: Failed to download fixed cpu_errata.c, using fallback"
+          if [ ! -s arch/arm64/kernel/cpu_errata.c ]; then
+            echo "Using sed fallback"
+            sed -i '/ERRATA_MIDR_RANGE_LIST/,/^[[:space:]]*}/d' arch/arm64/kernel/cpu_errata.c
+          fi
+
+      # ============ BUILD ============
+      - name: Build kernel
+        run: |
+          export PATH="$(pwd)/clang/bin:$PATH"
+          export ARCH=arm64
+          export SUBARCH=ARM64
+          export KBUILD_BUILD_USER="builder"
+          export KBUILD_BUILD_HOST="github"
+          cd kernel
+          # Generate defconfig and then fill defaults to avoid interactive prompts
+          make O=out vendor/${{ github.event.inputs.DEFCONFIG }}
+          make O=out olddefconfig
+          # Build with LLVM
+          make O=out CC=clang -j$(nproc --all) \
+            CROSS_COMPILE=aarch64-linux-gnu- \
+            LLVM=1 LLVM_IAS=1 AR=llvm-ar
+
+      # ============ COLLECT ============
+      - name: Collect artifacts
+        run: |
+          mkdir -p artifacts
+          cp kernel/out/arch/arm64/boot/Image.gz artifacts/ 2>/dev/null || true
+          cp kernel/out/arch/arm64/boot/dtbo.img artifacts/ 2>/dev/null || true
+          cp kernel/out/arch/arm64/boot/dtb.img artifacts/ 2>/dev/null || true
+
+      - name: Upload artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: kernel-lmi-build
+          path: artifacts/
