@@ -1,22 +1,18 @@
-name: Build Kernel (LMI)
+name: Build Kernel LMI (Auto Setup)
 
 on:
   workflow_dispatch:
     inputs:
       KERNEL_REPO:
-        description: 'Kernel repository URL'
+        description: 'Kernel repo URL'
         required: true
         default: 'https://github.com/Prabuelsi20/kernel_xiaomi_sm8250-Nesux-Alioth-Test'
       KERNEL_BRANCH:
-        description: 'Kernel branch'
+        description: 'Branch'
         required: true
         default: 'A16m-mglru'
-      DEFCONFIG:
-        description: 'Defconfig name (without path)'
-        required: true
-        default: 'lmi_defconfig'   # <-- DIUBAH ke lmi_defconfig
       COMPILER:
-        description: 'Compiler choice'
+        description: 'Compiler'
         required: true
         type: choice
         options:
@@ -24,11 +20,10 @@ on:
           - r574158
         default: neutron
       CUSTOM_VERSION:
-        description: 'Custom kernel version suffix'
-        required: false
-        default: '-Nexus'
-      BUILD_KSU:
-        description: 'Include KernelSU?'
+        description: 'Version suffix'
+        default: '-Nexus-LMI'
+      FIX_ERRATA:
+        description: 'Disable problematic errata (fix cpu_errata.c error)'
         required: true
         type: choice
         options:
@@ -61,46 +56,50 @@ jobs:
           mkdir clang
           tar -xf clang.tar.gz -C clang
 
-      - name: Clone kernel source (with submodules)
+      - name: Clone kernel with submodules
         run: |
           git clone --recurse-submodules --depth=1 \
             -b ${{ github.event.inputs.KERNEL_BRANCH }} \
             ${{ github.event.inputs.KERNEL_REPO }} \
             kernel
 
-      - name: Verify KernelSU exists
+      - name: Ensure KernelSU exists
         run: |
           cd kernel
-          if [ -d "drivers/kernelsu" ] && [ -f "drivers/kernelsu/Kconfig" ]; then
-            echo "✅ KernelSU found in kernel source"
-          else
-            echo "⚠️ KernelSU not found, cloning manually..."
+          if [ ! -f drivers/kernelsu/Kconfig ]; then
             rm -rf drivers/kernelsu
             git clone https://github.com/tiann/KernelSU.git drivers/kernelsu
           fi
 
-      - name: Remove KernelSU (if disabled)
-        if: ${{ github.event.inputs.BUILD_KSU == 'no' }}
+      - name: Fix errata (optional)
+        if: ${{ github.event.inputs.FIX_ERRATA == 'yes' }}
         run: |
           cd kernel
-          sed -i '/CONFIG_KSU/d' arch/arm64/configs/vendor/${{ github.event.inputs.DEFCONFIG }}
-          echo "# CONFIG_KSU is not set" >> arch/arm64/configs/vendor/${{ github.event.inputs.DEFCONFIG }}
+          # Disable all ARM64_ERRATUM that might cause cpu_errata.c error
+          sed -i '/CONFIG_ARM64_ERRATUM_1542418/d' arch/arm64/configs/vendor/lmi_defconfig
+          sed -i '/CONFIG_ARM64_ERRATUM_1024718/d' arch/arm64/configs/vendor/lmi_defconfig
+          sed -i '/CONFIG_ARM64_ERRATUM_843419/d' arch/arm64/configs/vendor/lmi_defconfig
+          # Also disable CONFIG_ARM64_ERRATUM_* that use MIDR_ALL_VERSIONS with non-existent models
+          # (we'll just comment out all CONFIG_ARM64_ERRATUM_* lines to be safe)
+          sed -i '/CONFIG_ARM64_ERRATUM_/d' arch/arm64/configs/vendor/lmi_defconfig
+          echo "# CONFIG_ARM64_ERRATUM_1024718 is not set" >> arch/arm64/configs/vendor/lmi_defconfig
+          echo "# CONFIG_ARM64_ERRATUM_1542418 is not set" >> arch/arm64/configs/vendor/lmi_defconfig
 
       - name: Set kernel version
         run: |
           cd kernel
           sed -i "s/CONFIG_LOCALVERSION=\"[^\"]*\"/CONFIG_LOCALVERSION=\"${{ github.event.inputs.CUSTOM_VERSION }}\"/" \
-            arch/arm64/configs/vendor/${{ github.event.inputs.DEFCONFIG }}
+            arch/arm64/configs/vendor/lmi_defconfig
 
       - name: Build kernel
         run: |
           export PATH="$(pwd)/clang/bin:$PATH"
           export ARCH=arm64
           export SUBARCH=ARM64
-          export KBUILD_BUILD_USER="builder"
+          export KBUILD_BUILD_USER="lmi-builder"
           export KBUILD_BUILD_HOST="github"
           cd kernel
-          make O=out vendor/${{ github.event.inputs.DEFCONFIG }}
+          make O=out vendor/lmi_defconfig
           make O=out CC=clang -j$(nproc --all) \
             CROSS_COMPILE=aarch64-linux-gnu- \
             LLVM=1 LLVM_IAS=1
@@ -108,12 +107,12 @@ jobs:
       - name: Collect artifacts
         run: |
           mkdir -p artifacts
-          cp kernel/out/arch/arm64/boot/Image.gz artifacts/ 2>/dev/null || true
+          cp kernel/out/arch/arm64/boot/Image.gz artifacts/
           cp kernel/out/arch/arm64/boot/dtbo.img artifacts/ 2>/dev/null || true
           cp kernel/out/arch/arm64/boot/dtb.img artifacts/ 2>/dev/null || true
 
       - name: Upload artifacts
         uses: actions/upload-artifact@v4
         with:
-          name: kernel-build-lmi
+          name: lmi-kernel-build
           path: artifacts/
