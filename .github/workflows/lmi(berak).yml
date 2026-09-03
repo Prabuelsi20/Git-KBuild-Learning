@@ -1,4 +1,4 @@
-name: Build Kernel LMI (Nexus) - Final Fix
+name: Build Kernel LMI (Nexus) - Final Fix 2
 
 on:
   workflow_dispatch:
@@ -46,7 +46,6 @@ jobs:
           sudo apt update
           sudo apt install -y flex libncurses6 bc cpio python3 zstd
 
-      # ============ COMPILER CACHE ============
       - name: Cache Clang (Neutron)
         if: ${{ github.event.inputs.COMPILER == 'neutron' }}
         id: cache-neutron
@@ -63,7 +62,6 @@ jobs:
           path: clang
           key: clang-r547379
 
-      # ============ DOWNLOAD COMPILER ============
       - name: Download Neutron
         if: ${{ github.event.inputs.COMPILER == 'neutron' && steps.cache-neutron.outputs.cache-hit != 'true' }}
         run: |
@@ -79,7 +77,6 @@ jobs:
           mkdir clang
           tar -xf clang.tar.gz -C clang
 
-      # ============ CLONE KERNEL ============
       - name: Clone kernel source (with submodules)
         run: |
           git clone --recurse-submodules --depth=1 \
@@ -87,7 +84,6 @@ jobs:
             ${{ github.event.inputs.KERNEL_REPO }} \
             kernel
 
-      # ============ KERNELSU ============
       - name: Ensure KernelSU is present
         if: ${{ github.event.inputs.BUILD_KSU == 'yes' }}
         run: |
@@ -104,14 +100,12 @@ jobs:
           sed -i '/CONFIG_KSU/d' arch/arm64/configs/vendor/${{ github.event.inputs.DEFCONFIG }}
           echo "# CONFIG_KSU is not set" >> arch/arm64/configs/vendor/${{ github.event.inputs.DEFCONFIG }}
 
-      # ============ SET VERSION ============
       - name: Set kernel version
         run: |
           cd kernel
           sed -i "s/CONFIG_LOCALVERSION=\"[^\"]*\"/CONFIG_LOCALVERSION=\"${{ github.event.inputs.CUSTOM_VERSION }}\"/" \
             arch/arm64/configs/vendor/${{ github.event.inputs.DEFCONFIG }}
 
-      # ============ FIX CPU_ERRATA.C ============
       - name: Fix cpu_errata.c
         run: |
           cd kernel
@@ -123,20 +117,17 @@ jobs:
             sed -i '/ERRATA_MIDR_RANGE_LIST/,/^[[:space:]]*}/d' arch/arm64/kernel/cpu_errata.c
           fi
 
-      # ============ FIX F2FS clear_cold_data ============
+      # ============ PERBAIKAN UTAMA: langsung replace clear_cold_data ============
       - name: Fix f2fs clear_cold_data
         run: |
           cd kernel
-          # 1. Add definition to f2fs.h if not exists
-          if ! grep -q "clear_cold_data" fs/f2fs/f2fs.h; then
-            echo "Adding clear_cold_data to f2fs.h"
-            sed -i '/static inline void set_cold_data(struct page \*page)/a static inline void clear_cold_data(struct page *page) { ClearPagePrivate2(page); }' fs/f2fs/f2fs.h
-          fi
-          # 2. If still error, directly replace call in data.c with ClearPagePrivate2
-          # (This is a fallback, but we keep it commented; if build fails, we can uncomment)
-          # sed -i 's/clear_cold_data(/ClearPagePrivate2(/' fs/f2fs/data.c
+          # Backup original
+          cp fs/f2fs/data.c fs/f2fs/data.c.bak
+          # Replace clear_cold_data with ClearPagePrivate2
+          sed -i 's/clear_cold_data(/ClearPagePrivate2(/' fs/f2fs/data.c
+          # If ClearPagePrivate2 not defined, fallback to ClearPagePrivate
+          # We'll check build, if fails, we'll try ClearPagePrivate later.
 
-      # ============ BUILD ============
       - name: Build kernel
         run: |
           export PATH="$(pwd)/clang/bin:$PATH"
@@ -151,7 +142,6 @@ jobs:
             CROSS_COMPILE=aarch64-linux-gnu- \
             LLVM=1 LLVM_IAS=1 AR=llvm-ar
 
-      # ============ COLLECT ============
       - name: Collect artifacts
         run: |
           mkdir -p artifacts
