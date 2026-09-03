@@ -1,0 +1,119 @@
+name: Build Kernel (LMI)
+
+on:
+  workflow_dispatch:
+    inputs:
+      KERNEL_REPO:
+        description: 'Kernel repository URL'
+        required: true
+        default: 'https://github.com/Prabuelsi20/kernel_xiaomi_sm8250-Nesux-Alioth-Test'
+      KERNEL_BRANCH:
+        description: 'Kernel branch'
+        required: true
+        default: 'A16m-mglru'
+      DEFCONFIG:
+        description: 'Defconfig name (without path)'
+        required: true
+        default: 'lmi_defconfig'   # <-- DIUBAH ke lmi_defconfig
+      COMPILER:
+        description: 'Compiler choice'
+        required: true
+        type: choice
+        options:
+          - neutron
+          - r574158
+        default: neutron
+      CUSTOM_VERSION:
+        description: 'Custom kernel version suffix'
+        required: false
+        default: '-Nexus'
+      BUILD_KSU:
+        description: 'Include KernelSU?'
+        required: true
+        type: choice
+        options:
+          - 'yes'
+          - 'no'
+        default: 'yes'
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Install dependencies
+        run: |
+          sudo apt update
+          sudo apt install -y flex libncurses6 bc cpio python3
+
+      - name: Setup compiler (Neutron)
+        if: ${{ github.event.inputs.COMPILER == 'neutron' }}
+        run: |
+          wget https://github.com/Neutron-Toolchains/clang-build-catalogue/releases/download/30072026/neutron-clang-30072026.tar.zst -O clang.tar.zst
+          mkdir clang
+          unzstd -d clang.tar.zst
+          tar -xf clang.tar -C clang
+
+      - name: Setup compiler (r574158)
+        if: ${{ github.event.inputs.COMPILER == 'r574158' }}
+        run: |
+          wget https://android.googlesource.com/platform/prebuilts/clang/host/linux-x86/+archive/ebcc6c3bef363bc539ea39f45b6abae1dce6ff1a/clang-r574158.tar.gz -O clang.tar.gz
+          mkdir clang
+          tar -xf clang.tar.gz -C clang
+
+      - name: Clone kernel source (with submodules)
+        run: |
+          git clone --recurse-submodules --depth=1 \
+            -b ${{ github.event.inputs.KERNEL_BRANCH }} \
+            ${{ github.event.inputs.KERNEL_REPO }} \
+            kernel
+
+      - name: Verify KernelSU exists
+        run: |
+          cd kernel
+          if [ -d "drivers/kernelsu" ] && [ -f "drivers/kernelsu/Kconfig" ]; then
+            echo "✅ KernelSU found in kernel source"
+          else
+            echo "⚠️ KernelSU not found, cloning manually..."
+            rm -rf drivers/kernelsu
+            git clone https://github.com/tiann/KernelSU.git drivers/kernelsu
+          fi
+
+      - name: Remove KernelSU (if disabled)
+        if: ${{ github.event.inputs.BUILD_KSU == 'no' }}
+        run: |
+          cd kernel
+          sed -i '/CONFIG_KSU/d' arch/arm64/configs/vendor/${{ github.event.inputs.DEFCONFIG }}
+          echo "# CONFIG_KSU is not set" >> arch/arm64/configs/vendor/${{ github.event.inputs.DEFCONFIG }}
+
+      - name: Set kernel version
+        run: |
+          cd kernel
+          sed -i "s/CONFIG_LOCALVERSION=\"[^\"]*\"/CONFIG_LOCALVERSION=\"${{ github.event.inputs.CUSTOM_VERSION }}\"/" \
+            arch/arm64/configs/vendor/${{ github.event.inputs.DEFCONFIG }}
+
+      - name: Build kernel
+        run: |
+          export PATH="$(pwd)/clang/bin:$PATH"
+          export ARCH=arm64
+          export SUBARCH=ARM64
+          export KBUILD_BUILD_USER="builder"
+          export KBUILD_BUILD_HOST="github"
+          cd kernel
+          make O=out vendor/${{ github.event.inputs.DEFCONFIG }}
+          make O=out CC=clang -j$(nproc --all) \
+            CROSS_COMPILE=aarch64-linux-gnu- \
+            LLVM=1 LLVM_IAS=1
+
+      - name: Collect artifacts
+        run: |
+          mkdir -p artifacts
+          cp kernel/out/arch/arm64/boot/Image.gz artifacts/ 2>/dev/null || true
+          cp kernel/out/arch/arm64/boot/dtbo.img artifacts/ 2>/dev/null || true
+          cp kernel/out/arch/arm64/boot/dtb.img artifacts/ 2>/dev/null || true
+
+      - name: Upload artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: kernel-build-lmi
+          path: artifacts/
