@@ -1,4 +1,4 @@
-name: Build Kernel LMI (Nexus) - Optimized
+name: Build Kernel LMI (Nexus) - Final Fix
 
 on:
   workflow_dispatch:
@@ -69,7 +69,7 @@ jobs:
         run: |
           wget https://github.com/Neutron-Toolchains/clang-build-catalogue/releases/download/30072026/neutron-clang-30072026.tar.zst -O clang.tar.zst
           mkdir clang
-          unzstd -d clang.tar.zst
+          zstd -d clang.tar.zst
           tar -xf clang.tar -C clang
 
       - name: Download r547379
@@ -118,21 +118,23 @@ jobs:
           cp arch/arm64/kernel/cpu_errata.c arch/arm64/kernel/cpu_errata.c.bak
           wget -O arch/arm64/kernel/cpu_errata.c \
             https://raw.githubusercontent.com/LineageOS/android_kernel_oneplus_sm8250/lineage-21/arch/arm64/kernel/cpu_errata.c || \
-            echo "WARNING: Failed to download fixed cpu_errata.c, using fallback"
+            echo "WARNING: Failed to download, using fallback"
           if [ ! -s arch/arm64/kernel/cpu_errata.c ]; then
-            echo "Using sed fallback"
             sed -i '/ERRATA_MIDR_RANGE_LIST/,/^[[:space:]]*}/d' arch/arm64/kernel/cpu_errata.c
           fi
 
-      # ============ FIX F2FS CLEAR_COLD_DATA ============
+      # ============ FIX F2FS clear_cold_data ============
       - name: Fix f2fs clear_cold_data
         run: |
           cd kernel
+          # 1. Add definition to f2fs.h if not exists
           if ! grep -q "clear_cold_data" fs/f2fs/f2fs.h; then
-            echo "Adding clear_cold_data definition to f2fs.h"
-            sed -i '/^static inline void set_cold_data/a \
-          static inline void clear_cold_data(struct page *page) { ClearPagePrivate2(page); }' fs/f2fs/f2fs.h
+            echo "Adding clear_cold_data to f2fs.h"
+            sed -i '/static inline void set_cold_data(struct page \*page)/a static inline void clear_cold_data(struct page *page) { ClearPagePrivate2(page); }' fs/f2fs/f2fs.h
           fi
+          # 2. If still error, directly replace call in data.c with ClearPagePrivate2
+          # (This is a fallback, but we keep it commented; if build fails, we can uncomment)
+          # sed -i 's/clear_cold_data(/ClearPagePrivate2(/' fs/f2fs/data.c
 
       # ============ BUILD ============
       - name: Build kernel
